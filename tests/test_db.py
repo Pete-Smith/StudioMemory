@@ -119,3 +119,7 @@ def test_swimlane_creation(basic_board):
     with pytest.raises(ValueError):
         malformed_add = actions.AddSwimlane('Impossible', -1)
         malformed_add.apply(basic_board)
+
+
+def test_swimlane_removal():
+    #TODO

@@ -385,7 +385,20 @@ class ModifySwimlane(Action):
     def apply(self, session: Session):
         self.validate(session)
         self.record_current_user(session)
-
+        swimlane = session.query(SwimlaneState) \
+            .filter(SwimlaneState.id_ == self.swimlane_id).one()
+        if self.field_name == 'wip_limit':
+            swimlane.wip_limit = int(self.field_value)
+        elif self.field_name == 'target':
+            if not self.field_value.strip():
+                swimlane.target = None
+            else:
+                dt = datetime.datetime.fromisoformat(self.field_value)
+                swimlane.target = dt
+        else:
+            setattr(swimlane, self.field_name, self.field_value)
+        session.commit()
+        return swimlane
 
 class AddEntry(Action):
     __tablename__ = 'add_entry'
