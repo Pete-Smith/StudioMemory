@@ -123,3 +123,4 @@ def test_swimlane_creation(basic_board):
 
 def test_swimlane_removal():
     #TODO
+    pass
