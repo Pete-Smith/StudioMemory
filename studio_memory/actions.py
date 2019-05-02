@@ -45,8 +45,8 @@ class Action(DeclarativeBase):
     def apply(self, session: Session):
         """
         Return None if the action was successful upon the state objects in the
-        given session. Otherwise raise an exception. The client code will be
-        responsible for managing the transaction.
+        given session. Otherwise raise an exception.
+        The client code will be responsible for managing the transaction.
         """
         raise NotImplementedError()
 
@@ -60,18 +60,7 @@ class Action(DeclarativeBase):
         return user
 
 
-class ColumnAction:
-    """ Common methods for column actions. Used as a mix-in class. """
-
-    @staticmethod
-    def active_cards(session, column):
-        return session.query(EntryState).filter(and_(
-            EntryState.column == column,
-            ~EntryState.status.in_(['discarded', 'removed'])
-        )).count()
-
-
-class AddColumn(Action, ColumnAction):
+class AddColumn(Action):
     __tablename__ = 'add_column'
     __mapper_args__ = {'polymorphic_identity': 'add_column'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
@@ -106,22 +95,28 @@ class AddColumn(Action, ColumnAction):
         return new_column
 
 
-class RemoveColumn(Action, ColumnAction):
+class RemoveColumn(Action):
     __tablename__ = 'remove_column'
     __mapper_args__ = {'polymorphic_identity': 'remove_column'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def __init__(self, column_id: int):
+        self.column_id = column_id
 
     def validate(self, session: Session):
         # Raises an exception if the column_id isn't found.
         column = session.query(ColumnState)\
                 .filter(ColumnState.id_ == self.column_id).one()
-        if self.active_cards(session, column) > 0:
+        if column.active_card_count() > 0:
             raise KanbanError(
                 'A column cannot be removed if there are active cards on it.'
             )
 
     def apply(self, session: Session) -> ColumnState:
-        """ Sets the status of the given column to 'removed'.  """
+        """
+         Sets the status of the given column to 'removed'.
+         Preserves the column's board_index.
+        """
         self.record_current_user(session)
         self.validate(session)
         column = session.query(ColumnState)\
@@ -131,21 +126,21 @@ class RemoveColumn(Action, ColumnAction):
         return column
 
 
-class MoveColumn(Action, ColumnAction):
+class MoveColumn(Action):
     __tablename__ = 'move_column'
     __mapper_args__ = {'polymorphic_identity': 'move_column'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
     new_index = Column(Integer)
 
-    def __init__(self, column_id: int, new_index: int):
+    def __init__(self, column: ColumnState, new_index: int):
         self.new_index = new_index
-        self.column_id = column_id
+        self.column_id = column.id_
 
     def validate(self, session: Session):
         # Raises an exception if the column_id isn't found.
         column = session.query(ColumnState)\
                 .filter(ColumnState.id_ == self.column_id).one()
-        if self.active_cards(session, column) > 0:
+        if column.active_card_count() > 0:
             raise KanbanError(
                 'A column cannot be moved if there are active cards on it.'
             )
@@ -173,34 +168,39 @@ class MoveColumn(Action, ColumnAction):
         return column
 
 
-class ModifyColumn(Action, ColumnAction):
+class ModifyColumn(Action):
     __tablename__ = 'modify_column'
     __mapper_args__ = {'polymorphic_identity': 'modify_column'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
-    field_name = Column(
-        Enum('title', 'done_rule', 'column_type', 'wip_limit', 'status',
-             'line_of_commitment')
-    )
+    valid_fields = ('title', 'done_rule', 'column_type', 'wip_limit', 'status',
+                    'line_of_commitment')
+    field_name = Column(Enum(*valid_fields))
     field_value = Column(Unicode)
 
     def __init__(self, column: ColumnState, name: str, value: str):
         self.column_id = column.id_
         self.field_name = name
-        try:
-            if name == 'wip_limit':
-                value = int(value)
-        except ValueError:
-            raise ValueError('WIP limit must be an integer.')
         self.field_value = value
 
     def validate(self, session: Session):
         # Raises an exception if the column_id isn't found.
         column = session.query(ColumnState)\
                 .filter(ColumnState.id_ == self.column_id).one()
+        active_column_titles = [
+            c.title for c in
+            session.query(ColumnState).filter(and_(
+                ColumnState.status == 'active',
+                ColumnState.id_ != self.column_id
+            ))
+        ]
+        if self.field_name not in self.valid_fields:
+            raise AttributeError(
+                f'{self.field_name} is not a valid field name.'
+            )
         if (self.field_name == 'column_type'
                 and self.field_value not in ColumnState.column_types
         ):
-            raise AttributeError(
+            raise ValueError(
                 f'{self.field_value} is not a valid column type.'
             )
         if self.field_name == 'wip_limit':
@@ -208,19 +208,35 @@ class ModifyColumn(Action, ColumnAction):
                 int(self.field_value)
             except ValueError:
                 raise ValueError('WIP limit must be an integer.')
+            if int(self.field_value) < 0:
+                raise ValueError('WIP limits may not be negative.')
         if (self.field_name == 'status'
             and self.field_value not in ('active', 'removed')
         ):
-            raise AttributeError(
+            raise ValueError(
                 f'{self.field_value} is not a valid status for a column.'
             )
-        if self.field_name == 'status' and self.field_value == 'removed':
-            if session.query(EntryState).filter(and_(
-                EntryState.column == column,
-                ~EntryState.status.in_(['discarded', 'removed'])
-            )).count():
-                raise KanbanError(
-                    'A column cannot be removed if there are active cards on it.'
+        if self.field_name == 'status':
+            if self.field_value == 'removed':
+                if session.query(EntryState).filter(and_(
+                    EntryState.column == column,
+                    ~EntryState.status.in_(['discarded', 'removed'])
+                )).count():
+                    raise KanbanError(
+                        'A column cannot be removed '
+                        'if there are active cards on it.'
+                    )
+            elif self.field_value == 'active':
+                if column.title in active_column_titles:
+                    raise ValueError(
+                        'Unable to re-activate column because there is another '
+                        'active column with its title.'
+                    )
+        if self.field_name == 'title':
+            if self.field_value in active_column_titles:
+                raise ValueError(
+                    'Unable to change column title to non-unique value : '
+                    + str(self.field_value)
                 )
 
     def apply(self, session: Session) -> ColumnState:
@@ -235,7 +251,7 @@ class ModifyColumn(Action, ColumnAction):
                 if c is not column:
                     c.line_of_commitment = False
         else:
-            print(f"{self.field_name} --> {self.field_value}")
+            # print(f"{self.field_name} --> {self.field_value}")
             setattr(column, self.field_name, self.field_value)
         session.commit()
         return column
@@ -243,8 +259,38 @@ class ModifyColumn(Action, ColumnAction):
 
 class AddSwimlane(Action):
     __tablename__ = 'add_swimlane'
-    __mapper_args__ = {'polymorphic_identity':'add_swimlane'}
+    __mapper_args__ = {'polymorphic_identity': 'add_swimlane'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+    title = Column(String)
+    wip_limit = Column(Integer)
+
+    def __init__(self, title: str, wip_limit: int = 0):
+        self.title = title
+        self.wip_limit = wip_limit
+
+    def validate(self, session: Session):
+        # Test that the title is unique among active swimlanes.
+        titles = [
+            s.title for s in session.query(SwimlaneState)
+            .filter(SwimlaneState.status == 'active').all()
+        ]
+        if self.title in titles:
+            raise ValueError(
+                'Two active swimlanes with the same title is disallowed.'
+            )
+        # Test that the wip_limit is greater than zero.
+        if self.wip_limit < 0:
+            raise ValueError('Negative WIP limits are disallowed.')
+
+    def apply(self, session: Session) -> SwimlaneState:
+        self.record_current_user(session)
+        self.validate(session)
+        new_swimlane = SwimlaneState(
+            id_=self.swimlane_id, title=self.title, wip_limit=self.wip_limit
+        )
+        session.add(new_swimlane)
+        session.commit()
+        return new_swimlane
 
 
 class RemoveSwimlane(Action):

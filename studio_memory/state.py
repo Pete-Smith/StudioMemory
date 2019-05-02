@@ -1,8 +1,8 @@
 import sys
 
-import PyQt5.QtCore as core
+from PyQt5 import QtCore
 from sqlalchemy import (
-    Column, DateTime, Enum, ForeignKey, Integer, Unicode, Boolean, String
+    Column, DateTime, Enum, ForeignKey, Integer, Unicode, Boolean, String, and_,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm.session import Session
@@ -24,7 +24,7 @@ class ColumnState(DeclarativeBase):
         default='queue'
     )
     wip_limit = Column(Integer, default=0)
-    line_of_commitment = Column(Boolean)
+    line_of_commitment = Column(Boolean, default=False)
     status = Column(
         Enum('active', 'removed', name='ColumnStatus'), default='active'
     )
@@ -36,6 +36,21 @@ class ColumnState(DeclarativeBase):
             f"wip_limit={self.wip_limit}, status='{self.status}')>"
         )
 
+    @staticmethod
+    def active_columns(session: Session):
+        return [
+            c for c in
+            session.query(ColumnState).filter(ColumnState.status == 'active')
+            .order_by(ColumnState.board_index)
+        ]
+
+    def active_card_count(self):
+        session = Session.object_session(self)
+        return session.query(EntryState).filter(and_(
+            EntryState.column == self,
+            ~EntryState.status.in_(['discarded', 'removed'])
+        )).count()
+
 
 class SwimlaneState(DeclarativeBase):
     __tablename__ = 'swimlanes'
@@ -45,16 +60,21 @@ class SwimlaneState(DeclarativeBase):
     status = Column(
         Enum('active', 'removed', name='ColumnStatus'), default='active'
     )
-    target_start = Column(DateTime)
-    target_end = Column(DateTime)
+    target = Column(DateTime, nullable=True)
 
     def __repr__(self):
         return(
             f"<SwimlaneState(id_={self.id_}, board_index={self.board_index}, "
             f"title='{self.title}', wip_limit={self.wip_limit}, "
-            f"status='{self.status}', target_start={self.target_start}, "
-            f"target_end={self.target_end})>"
+            f"status='{self.status}', target={self.target})>"
         )
+
+    def active_card_count(self):
+        session = Session.object_session(self)
+        return session.query(EntryState).filter(and_(
+            EntryState.swimlane == self,
+            ~EntryState.status.in_(['discarded', 'removed'])
+        )).count()
 
 
 class EntryState(DeclarativeBase):
@@ -73,13 +93,20 @@ class EntryState(DeclarativeBase):
     cycle_end = Column(DateTime)
     status = Column(
         Enum(
-            'note', # Not on the board, simply an outline entry.
-            'card', # An active card on the board
-            'blocked', # A card on the board that a User has flagged as 'blocked'
-            'discarded', # A card that has been discarded
-            'complete', # A card that is in the last space on the board
-            'removed', # An entry that has been deleted from the outline entirely.
-             name='StatusType'),
+            # Not on the board, simply an outline entry.
+            'note',
+            # An active card on the board
+            'card',
+            # A card on the board that a User has flagged as 'blocked'
+            'blocked',
+            # A card that has been discarded
+            'discarded',
+            # A card that is in the last space on the board
+            'complete',
+            # An entry that has been deleted from the outline entirely.
+            'removed',
+            name='StatusType'
+        ),
         default='note'
     )
 
@@ -89,18 +116,17 @@ class User(DeclarativeBase):
     uid = Column(String(36), primary_key=True)
     name = Column(Unicode)
     @staticmethod
-    def check_in(name:str, uid:bytes):
+    def check_in(name: str, uid: bytes):
         """
         Gets or creates a User and returns the instance.
         User names for identifying edits, and not keeping people from
         reading our data.
         Raises an exception if the name and uid do not match.
         """
-        app = core.QCoreApplication.instance() or core.QCoreApplication(sys.argv)
-        settings = core.QSettings(ORG_NAME, APP_NAME)
+        app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication(sys.argv)
+        settings = QtCore.QSettings(ORG_NAME, APP_NAME)
         settings.setValue('User.name', name)
         settings.setValue('User.uid', uid)
-
 
     @staticmethod
     def current(session: Session):
@@ -109,8 +135,8 @@ class User(DeclarativeBase):
         If the User doesn't exist in the sessions database,
         and there isn't a conflict, this method will create it.
         """
-        app = core.QCoreApplication.instance() or core.QCoreApplication(sys.argv)
-        settings = core.QSettings(ORG_NAME, APP_NAME)
+        app = QtCore.QCoreApplication.instance() or QtCore.QCoreApplication(sys.argv)
+        settings = QtCore.QSettings(ORG_NAME, APP_NAME)
         name = settings.value('User.name', None)
         uid = settings.value('User.uid', None)
         if None in (name, uid):
