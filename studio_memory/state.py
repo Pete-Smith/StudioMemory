@@ -18,9 +18,9 @@ class ColumnState(DeclarativeBase):
     board_index = Column(Integer)
     title = Column(Unicode, default='')
     done_rule = Column(Unicode, default='')
-    _column_types = ('queue', 'step', 'breakdown', 'collect')
+    column_types = ('queue', 'step', 'breakdown', 'collect')
     column_type = Column(
-        Enum(*_column_types, name='ColumnType'),
+        Enum(*column_types, name='ColumnType'),
         default='queue'
     )
     wip_limit = Column(Integer, default=0)
@@ -101,8 +101,9 @@ class User(DeclarativeBase):
         settings.setValue('User.name', name)
         settings.setValue('User.uid', uid)
 
+
     @staticmethod
-    def current(session:Session):
+    def current(session: Session):
         """
         Retrieve the checked-in User instance.
         If the User doesn't exist in the sessions database,
@@ -132,6 +133,7 @@ class User(DeclarativeBase):
             user = User(name=name, uid=uid)
             session.add(user)
             session.commit()
+        return user
 
 
 ColumnState.entries = relationship('EntryState', back_populates='column')
@@ -143,5 +145,6 @@ EntryState.column = relationship(
     'ColumnState', back_populates='entries', order_by='EntryState.board_index'
 )
 EntryState.branch = relationship(
-    'EntryState', remote_side=[EntryState.id_], backref='twigs', order_by='EntryState.outline_index'
+    'EntryState', remote_side=[EntryState.id_], backref='twigs',
+    order_by='EntryState.outline_index'
 )
