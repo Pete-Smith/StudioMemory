@@ -6,6 +6,7 @@ from sqlalchemy import (
 )
 # from sqlalchemy.orm import relationship
 from sqlalchemy.orm.session import Session
+from sqlalchemy.orm.exc import NoResultFound
 
 from studio_memory import DeclarativeBase
 from studio_memory.state import (
@@ -178,6 +179,9 @@ class ModifyColumn(Action):
     field_value = Column(Unicode)
 
     def __init__(self, column: ColumnState, name: str, value: str):
+        """
+        Convert values to strings before passing them into this constructor.
+        """
         self.column_id = column.id_
         self.field_name = name
         self.field_value = value
@@ -198,8 +202,7 @@ class ModifyColumn(Action):
                 f'{self.field_name} is not a valid field name.'
             )
         if (self.field_name == 'column_type'
-                and self.field_value not in ColumnState.column_types
-        ):
+                and self.field_value not in ColumnState.column_types):
             raise ValueError(
                 f'{self.field_value} is not a valid column type.'
             )
@@ -211,21 +214,13 @@ class ModifyColumn(Action):
             if int(self.field_value) < 0:
                 raise ValueError('WIP limits may not be negative.')
         if (self.field_name == 'status'
-            and self.field_value not in ('active', 'removed')
-        ):
+                and self.field_value not in ('active', 'removed')):
             raise ValueError(
                 f'{self.field_value} is not a valid status for a column.'
             )
         if self.field_name == 'status':
             if self.field_value == 'removed':
-                if session.query(EntryState).filter(and_(
-                    EntryState.column == column,
-                    ~EntryState.status.in_(['discarded', 'removed'])
-                )).count():
-                    raise KanbanError(
-                        'A column cannot be removed '
-                        'if there are active cards on it.'
-                    )
+                raise ValueError('Use the remove column action instead.')
             elif self.field_value == 'active':
                 if column.title in active_column_titles:
                     raise ValueError(
@@ -238,6 +233,8 @@ class ModifyColumn(Action):
                     'Unable to change column title to non-unique value : '
                     + str(self.field_value)
                 )
+            elif self.field_value.strip() == '':
+                raise ValueError('Column titles may not be blank.')
 
     def apply(self, session: Session) -> ColumnState:
         self.validate(session)
@@ -298,26 +295,132 @@ class RemoveSwimlane(Action):
     __mapper_args__ = {'polymorphic_identity':'remove_swimlane'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
 
+    def __init__(self, swimlane: SwimlaneState):
+        self.swimlane_id = swimlane.id_
+
+    def validate(self, session: Session):
+        swimlane = session.query(SwimlaneState)\
+            .filter(SwimlaneState.id_ == self.swimlane_id).one()
+        if swimlane.active_card_count() > 0:
+            raise KanbanError(
+                'A swimlane cannot be removed if there are active cards on it.'
+            )
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
+        swimlane = session.query(SwimlaneState) \
+            .filter(SwimlaneState.id_ == self.swimlane_id).one()
+        swimlane.status = 'removed'
+        session.commit()
+        return swimlane
+
 
 class ModifySwimlane(Action):
     __tablename__ = 'modify_swimlane'
-    __mapper_args__ = {'polymorphic_identity':'modify_swimlane'}
+    __mapper_args__ = {'polymorphic_identity': 'modify_swimlane'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+    valid_fields = ('title', 'wip_limit', 'status', 'target')
+    field_name = Column(Enum(*valid_fields))
+    field_value = Column(Unicode)
+
+    def __init__(self, swimlane: SwimlaneState, name: str, value: str):
+        """
+        Convert values to strings before passing them into this constructor.
+        """
+        self.swimlane_id = swimlane.id_
+        self.field_name = name
+        self.field_value = value
+
+    def validate(self, session: Session):
+        try:
+            swimlane = session.query(SwimlaneState)\
+                .filter(SwimlaneState.id_ == self.swimlane_id).one()
+        except NoResultFound:
+            raise IndexError(f'Swimlane id not found : {self.swimlane_id}')
+        active_swimlane_titles = [
+            s.title for s in
+            session.query(SwimlaneState).filter(and_(
+                SwimlaneState.status == 'active',
+                SwimlaneState.id_ != self.swimlane_id
+            ))
+        ]
+        if self.field_name not in self.valid_fields:
+            raise AttributeError(
+                f'{self.field_name} is not a valid field name.'
+            )
+        if self.field_name == 'title':
+            if self.field_value in active_swimlane_titles:
+                raise ValueError('Duplicate swimlane titles are disallowed.')
+            elif self.field_value.strip() == '':
+                raise ValueError('Empty swimlane titles are disallowed.')
+        elif self.field_name == 'wip_limit':
+            try:
+                int(self.field_value)
+            except ValueError:
+                raise ValueError('WIP limits must be integers.')
+            if int(self.field_value) < 0:
+                raise ValueError('WIP limits can not be negative.')
+        elif self.field_name == 'status':
+            if self.field_name == 'removed':
+                raise ValueError('Use the remove swimlane action instead.')
+            elif self.field_value == 'active':
+                if self.field_value in active_swimlane_titles:
+                    raise ValueError(
+                        'Swimlane can not be reactivated because there is '
+                        'another active swimlane with the same title.'
+                    )
+            else:
+                raise ValueError(f'Unknown status: {self.field_value}')
+        elif self.field_name == 'target':
+            try:
+                if self.field_value.strip() != '':
+                    datetime.datetime.fromisoformat(self.field_value)
+            except ValueError:
+                raise ValueError(
+                    'Target datetime value must be an ISO formatted string '
+                    'or a blank string.'
+                )
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
 
 
 class AddEntry(Action):
     __tablename__ = 'add_entry'
-    __mapper_args__ = {'polymorphic_identity':'add_entry'}
+    __mapper_args__ = {'polymorphic_identity': 'add_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
 
 
 class RemoveEntry(Action):
     __tablename__ = 'remove_entry'
-    __mapper_args__ = {'polymorphic_identity':'remove_entry'}
+    __mapper_args__ = {'polymorphic_identity': 'remove_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
 
 
 class ModifyEntry(Action):
     __tablename__ = 'modify_entry'
-    __mapper_args__ = {'polymorphic_identity':'modify_entry'}
+    __mapper_args__ = {'polymorphic_identity': 'modify_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
