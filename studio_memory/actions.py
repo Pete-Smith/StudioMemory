@@ -1,3 +1,4 @@
+""" Project history persistence and operational logic. """
 import datetime
 from abc import abstractmethod
 
@@ -428,6 +429,9 @@ class RemoveEntry(Action):
         self.validate(session)
         self.record_current_user(session)
 
+
+class MoveEntryOnBoard(Action):
+    pass
 
 class ModifyEntry(Action):
     __tablename__ = 'modify_entry'

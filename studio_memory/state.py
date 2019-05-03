@@ -1,3 +1,4 @@
+""" Objects that persist the cumulative result of the action classes. """
 import sys
 
 from PyQt5 import QtCore
@@ -97,9 +98,9 @@ class EntryState(DeclarativeBase):
     # level = Column(Integer)
     cycle_start = Column(DateTime, nullable=True)
     cycle_end = Column(DateTime, nullable=True)
-    created_by = Column(String(36), ForeignKey('User.uid'))
+    created_by = Column(String(36), ForeignKey('users.uid'))
     created_timestamp = Column(DateTime, nullable=True)
-    modified_by = Column(String(36), ForeignKey('User.uid'))
+    modified_by = Column(String(36), ForeignKey('users.uid'))
     modified_timestamp = Column(DateTime, nullable=True)
     status = Column(
         Enum(
