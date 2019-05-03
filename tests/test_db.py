@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -121,6 +123,37 @@ def test_swimlane_creation(basic_board):
         malformed_add.apply(basic_board)
 
 
-def test_swimlane_removal():
-    #TODO
-    pass
+def test_swimlane_removal(basic_board):
+    add_swimlane_action = actions.AddSwimlane('Test Title', 0)
+    swimlane = add_swimlane_action.apply(basic_board)
+    remove_swimlane_action = actions.RemoveSwimlane(swimlane)
+    remove_swimlane_action.apply(basic_board)
+
+
+def test_swimlane_modification(basic_board):
+    add_swimlane_action = actions.AddSwimlane('Test Title', 0)
+    swimlane = add_swimlane_action.apply(basic_board)
+    modify_wip = actions.ModifySwimlane(swimlane, 'wip_limit', 1)
+    modify_wip.apply(basic_board)
+    assert swimlane.wip_limit == 1
+    modify_title = actions.ModifySwimlane(swimlane, 'title', 'Test Title')
+    modify_title.apply(basic_board)
+    assert swimlane.title == 'Test Title'
+    timestamp = datetime.datetime.now().isoformat()
+    modify_target_start = actions.ModifySwimlane(
+        swimlane, 'target_start', timestamp
+    )
+    modify_target_start.apply(basic_board)
+    assert swimlane.target_start == datetime.datetime.fromisoformat(timestamp)
+    # Negative WIP limits are disallowed.
+    with pytest.raises(ValueError):
+        invalid_wip = actions.ModifySwimlane(swimlane, 'wip_limit', '-1')
+        invalid_wip.apply(basic_board)
+    # Non-integer WIP limits are disallowed.
+    with pytest.raises(ValueError):
+        invalid_wip = actions.ModifySwimlane(swimlane, 'wip_limit', 'foo')
+        invalid_wip.apply(basic_board)
+    # Empty titles are disallowed.
+    with pytest.raises(ValueError):
+        invalid_title = actions.ModifySwimlane(swimlane, 'title', '')
+        invalid_title.apply(basic_board)

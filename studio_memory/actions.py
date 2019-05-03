@@ -320,7 +320,9 @@ class ModifySwimlane(Action):
     __tablename__ = 'modify_swimlane'
     __mapper_args__ = {'polymorphic_identity': 'modify_swimlane'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
-    valid_fields = ('title', 'wip_limit', 'status', 'target')
+    valid_fields = (
+        'title', 'wip_limit', 'status', 'target_start', 'target_end'
+    )
     field_name = Column(Enum(*valid_fields))
     field_value = Column(Unicode)
 
@@ -372,7 +374,7 @@ class ModifySwimlane(Action):
                     )
             else:
                 raise ValueError(f'Unknown status: {self.field_value}')
-        elif self.field_name == 'target':
+        elif self.field_name in ('target_start', 'target_end'):
             try:
                 if self.field_value.strip() != '':
                     datetime.datetime.fromisoformat(self.field_value)
@@ -389,16 +391,17 @@ class ModifySwimlane(Action):
             .filter(SwimlaneState.id_ == self.swimlane_id).one()
         if self.field_name == 'wip_limit':
             swimlane.wip_limit = int(self.field_value)
-        elif self.field_name == 'target':
+        elif self.field_name in ('target_start', 'target_end'):
             if not self.field_value.strip():
-                swimlane.target = None
+                setattr(swimlane, self.field_name, None)
             else:
                 dt = datetime.datetime.fromisoformat(self.field_value)
-                swimlane.target = dt
+                setattr(swimlane, self.field_name, dt)
         else:
             setattr(swimlane, self.field_name, self.field_value)
         session.commit()
         return swimlane
+
 
 class AddEntry(Action):
     __tablename__ = 'add_entry'

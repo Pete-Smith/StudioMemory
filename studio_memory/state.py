@@ -60,13 +60,15 @@ class SwimlaneState(DeclarativeBase):
     status = Column(
         Enum('active', 'removed', name='ColumnStatus'), default='active'
     )
-    target = Column(DateTime, nullable=True)
+    target_start = Column(DateTime, nullable=True)
+    target_end = Column(DateTime, nullable=True)
 
     def __repr__(self):
         return(
             f"<SwimlaneState(id_={self.id_}, board_index={self.board_index}, "
             f"title='{self.title}', wip_limit={self.wip_limit}, "
-            f"status='{self.status}', target={self.target})>"
+            f"status='{self.status}', target_start={self.target_start}, "
+            f"target_end={self.target_end}>"
         )
 
     def active_card_count(self):
@@ -80,17 +82,25 @@ class SwimlaneState(DeclarativeBase):
 class EntryState(DeclarativeBase):
     __tablename__ = 'entries'
     id_ = Column(Integer, primary_key=True)
-    outline_index = Column(Integer)
-    board_index = Column(Integer)
-    subcolumn_index = Column(Integer, default=0)
     swimlane_id = Column(Integer, ForeignKey('swimlanes.id_'))
     column_id = Column(Integer, ForeignKey('columns.id_'))
     branch_id = Column(Integer, ForeignKey('entries.id_'))
+    # Outline sorting, per branch
+    outline_index = Column(Integer)
+    # Board sorting, per column-swimlane box.
+    board_index = Column(Integer)
+    # Some column-swimlane boxes are partitioned.
+    # Like the doing and done sub-steps in the step columns.
+    subcolumn_index = Column(Integer, default=0)
     text = Column(Unicode)
-    level = Column(Integer)
-    inception = Column(DateTime)
-    cycle_start = Column(DateTime)
-    cycle_end = Column(DateTime)
+    # What's level for? Uncomment this when I figure out what I was thinking.
+    # level = Column(Integer)
+    cycle_start = Column(DateTime, nullable=True)
+    cycle_end = Column(DateTime, nullable=True)
+    created_by = Column(String(36), ForeignKey('User.uid'))
+    created_timestamp = Column(DateTime, nullable=True)
+    modified_by = Column(String(36), ForeignKey('User.uid'))
+    modified_timestamp = Column(DateTime, nullable=True)
     status = Column(
         Enum(
             # Not on the board, simply an outline entry.
