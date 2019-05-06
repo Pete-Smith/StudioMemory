@@ -110,7 +110,8 @@ class EntryState(DeclarativeBase):
             'card',
             # A card on the board that a User has flagged as 'blocked'
             'blocked',
-            # A card that has been discarded
+            # A card that has been discarded.
+            # Treated like a note, but has a history on the board.
             'discarded',
             # A card that is in the last space on the board
             'complete',

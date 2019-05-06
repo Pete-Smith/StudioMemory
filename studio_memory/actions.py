@@ -507,13 +507,31 @@ class ModifyEntry(Action):
     __tablename__ = 'modify_entry'
     __mapper_args__ = {'polymorphic_identity': 'modify_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+    valid_fields = ('text', )
+    field_name = Column(Enum(*valid_fields))
+    field_value = Column(Unicode)
+
+    def __init__(self, entry: EntryState, name: str, value: str):
+        self.entry_id = entry.id_
+        self.field_name = name
+        self.field_value = value
 
     def validate(self, session: Session):
-        pass
+        entry = session.query(EntryState)\
+            .filter(EntryState.id_ == self.entry_id).one()
+        if entry.status == 'removed':
+            raise ValueError('Modifying a removed entry is disallowed.')
 
     def apply(self, session: Session):
         self.validate(session)
-        self.record_current_user(session)
+        user = self.record_current_user(session)
+        entry = session.query(EntryState) \
+            .filter(EntryState.id_ == self.entry_id).one()
+        entry.modified_timestamp = datetime.datetime.now()
+        entry.modified_by = user.uid
+        setattr(entry, self.field_name, self.field_value)
+        session.commit()
+        return entry
 
 
 class MoveEntryOnBoard(Action):

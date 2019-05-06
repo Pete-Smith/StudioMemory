@@ -186,5 +186,12 @@ def test_nested_entry_manipulation(basic_board):
     grow_branch(a_branch, 'A', 10)
     assert basic_board.query(state.EntryState).count() == 20
     actions.RemoveEntry(a_branch).apply(basic_board)
-    assert basic_board.query(state.EntryState)\
-           .filter(state.EntryState.status != 'removed').count() == 9
+    assert basic_board.query(state.EntryState) \
+       .filter(state.EntryState.status != 'removed').count() == 9
+    b_branch = basic_board.query(state.EntryState) \
+        .filter(state.EntryState.text == 'B').one()
+    actions.ModifyEntry(b_branch, 'text', 'Modified').apply(basic_board)
+    basic_board.query(state.EntryState) \
+        .filter(state.EntryState.text == 'Modified').one()
+
+
