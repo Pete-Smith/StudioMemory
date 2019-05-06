@@ -89,10 +89,10 @@ class AddColumn(Action):
         for c in session.query(ColumnState)\
                 .filter(ColumnState.board_index >= self.insertion_index).all():
             c.board_index += 1
-        new_column = ColumnState(
-            id_=self.column_id, board_index=self.insertion_index,
-        )
+        new_column = ColumnState(board_index=self.insertion_index)
         session.add(new_column)
+        session.commit()
+        self.column_id = new_column.id_
         session.commit()
         return new_column
 
@@ -288,6 +288,8 @@ class AddSwimlane(Action):
         )
         session.add(new_swimlane)
         session.commit()
+        self.swimlane_id = new_swimlane.id_
+        session.commit()
         return new_swimlane
 
 
@@ -408,13 +410,67 @@ class AddEntry(Action):
     __tablename__ = 'add_entry'
     __mapper_args__ = {'polymorphic_identity': 'add_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+    parent_id = Column(Integer, ForeignKey('entries.id_'))
+    insertion_index = Column(Integer)
+
+    def __init__(self, parent, insertion_index: int, text: str):
+        if isinstance(parent, EntryState):
+            self.parent_id = parent.id_
+        elif parent is None:
+            self.parent_id = None
+        else:
+            raise TypeError(
+                'parent parameter must be an EntryState instance or None.'
+            )
+        self.insertion_index = insertion_index
+        self.text = text
 
     def validate(self, session: Session):
-        pass
+        if session.query(EntryState).filter(
+            EntryState.id_ == self.entry_id
+        ).count():
+            raise IndexError(
+                f'Column with id == {self.entry_id} already exists.'
+            )
+        if self.parent_id is not None:
+            try:
+                session.query(EntryState).filter(
+                    EntryState.id_ == self.parent_id
+                ).one()
+            except NoResultFound:
+                raise IndexError(f'Parent entry not found : {self.parent_id}.')
+            sibling_count = session.query(EntryState).filter(
+                and_(EntryState.branch_id == self.parent_id,
+                     EntryState.status != 'removed'
+                     )
+            ).count()
+            if (self.insertion_index > sibling_count
+                    or self.insertion_index < -1):
+                raise IndexError(
+                    f'Invalid insertion index : {self.insertion_index}'
+                )
 
     def apply(self, session: Session):
         self.validate(session)
-        self.record_current_user(session)
+        user = self.record_current_user(session)
+        #  Adjust existing indices.
+        for entry in session.query(EntryState).filter(
+            and_(EntryState.branch_id == self.parent_id,
+                 EntryState.status != 'removed')
+        ).all():
+            if entry.outline_index >= self.insertion_index:
+                entry.outline_index += 1
+        new_entry = EntryState(
+            outline_index=self.insertion_index,
+            text=self.text, branch_id=self.parent_id, status='note',
+            created_by=user.uid, created_timestamp=datetime.datetime.now(),
+            modified_by=user.uid, modified_timestamp=datetime.datetime.now(),
+        )
+        session.add(new_entry)
+        session.commit()
+        self.entry_id = new_entry.id_
+        session.commit()
+        return new_entry
 
 
 class RemoveEntry(Action):
@@ -432,6 +488,11 @@ class RemoveEntry(Action):
 
 class MoveEntryOnBoard(Action):
     pass
+
+
+class MoveEntryOnOutline(Action):
+    pass
+
 
 class ModifyEntry(Action):
     __tablename__ = 'modify_entry'

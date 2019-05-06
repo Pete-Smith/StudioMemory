@@ -32,6 +32,8 @@ def basic_board(session):
         column = add_column_action.apply(session)
         modify_title_action = actions.ModifyColumn(column, 'title', title)
         session.add(modify_title_action)
+        session.query(state.ColumnState)\
+            .filter(state.ColumnState.id_ == modify_title_action.column_id).one()
         column = modify_title_action.apply(session)
         modify_wip_limit_action = actions.ModifyColumn(
             column, 'wip_limit', BASIC_WIP_LIMITS[i]
@@ -113,7 +115,8 @@ def test_swimlane_creation(basic_board):
     """
     add_swimlane_action = actions.AddSwimlane('Test Title', 0)
     add_swimlane_action.apply(basic_board)
-    assert basic_board.query(state.SwimlaneState).count() == 1
+    basic_board.query(state.SwimlaneState)\
+        .filter(state.SwimlaneState.id_ == add_swimlane_action.swimlane_id).one()
     # Duplicate titles are disallowed.
     with pytest.raises(ValueError):
         redundant_add = actions.AddSwimlane('Test Title', 0)
@@ -158,3 +161,10 @@ def test_swimlane_modification(basic_board):
     with pytest.raises(ValueError):
         invalid_title = actions.ModifySwimlane(swimlane, 'title', '')
         invalid_title.apply(basic_board)
+
+
+def test_basic_entry_creation(basic_board):
+    add_entry_action = actions.AddEntry(None, 0, 'Test Entry')
+    add_entry_action.apply(basic_board)
+    basic_board.query(state.EntryState)\
+        .filter(state.EntryState.id_ == add_entry_action.entry_id).one()
