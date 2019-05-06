@@ -412,6 +412,7 @@ class AddEntry(Action):
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
     parent_id = Column(Integer, ForeignKey('entries.id_'))
     insertion_index = Column(Integer)
+    text = Column(Unicode)
 
     def __init__(self, parent, insertion_index: int, text: str):
         if isinstance(parent, EntryState):
@@ -478,6 +479,33 @@ class RemoveEntry(Action):
     __mapper_args__ = {'polymorphic_identity': 'remove_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
 
+    def __init__(self, entry: EntryState):
+        self.entry_id = entry.id_
+
+    def validate(self, session: Session):
+        # Raises an exception if the column_id isn't found.
+        session.query(EntryState).filter(EntryState.id_ == self.entry_id).one()
+
+    @staticmethod
+    def _mark_entries_removed(entry):
+        entry.status = 'removed'
+        for twig in entry.twigs:
+            RemoveEntry._mark_entries_removed(twig)
+
+    def apply(self, session: Session):
+        self.validate(session)
+        self.record_current_user(session)
+        entry = session.query(EntryState)\
+            .filter(EntryState.id_ == self.entry_id).one()
+        RemoveEntry._mark_entries_removed(entry)
+        session.commit()
+
+
+class ModifyEntry(Action):
+    __tablename__ = 'modify_entry'
+    __mapper_args__ = {'polymorphic_identity': 'modify_entry'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
     def validate(self, session: Session):
         pass
 
@@ -492,16 +520,3 @@ class MoveEntryOnBoard(Action):
 
 class MoveEntryOnOutline(Action):
     pass
-
-
-class ModifyEntry(Action):
-    __tablename__ = 'modify_entry'
-    __mapper_args__ = {'polymorphic_identity': 'modify_entry'}
-    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
-
-    def validate(self, session: Session):
-        pass
-
-    def apply(self, session: Session):
-        self.validate(session)
-        self.record_current_user(session)

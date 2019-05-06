@@ -154,11 +154,11 @@ class User(DeclarativeBase):
             raise EnvironmentError('No user is currently checked-in.')
         try:
             user = session.query(User)\
-                    .filter(User.name.ilike(name), User.uid==uid).one()
+                    .filter(User.name.ilike(name), User.uid == uid).one()
         except NoResultFound:
             same_name = session.query(User)\
                     .filter(User.name.ilike(name)).count()
-            same_uid = session.query(User).filter(User.uid==uid).count()
+            same_uid = session.query(User).filter(User.uid == uid).count()
             if same_name or same_uid:
                 raise ValueError(
                     f'User name/uid mismatch.\n'

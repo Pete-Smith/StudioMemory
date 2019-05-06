@@ -1,5 +1,7 @@
 """ Test the state and action database system. """
 import datetime
+import string
+import random
 
 import pytest
 from sqlalchemy import create_engine
@@ -168,3 +170,21 @@ def test_basic_entry_creation(basic_board):
     add_entry_action.apply(basic_board)
     basic_board.query(state.EntryState)\
         .filter(state.EntryState.id_ == add_entry_action.entry_id).one()
+
+
+def test_nested_entry_manipulation(basic_board):
+    def grow_branch(branch, prefix, number):
+        twigs = list()
+        for x in range(number):
+            twigs.append((prefix + string.ascii_uppercase[x], x, branch))
+        for text, index, parent in twigs:
+            actions.AddEntry(parent, index, text).apply(basic_board)
+    grow_branch(None, '', 10)
+    assert basic_board.query(state.EntryState).count() == 10
+    a_branch = basic_board.query(state.EntryState)\
+        .filter(state.EntryState.text == 'A').one()
+    grow_branch(a_branch, 'A', 10)
+    assert basic_board.query(state.EntryState).count() == 20
+    actions.RemoveEntry(a_branch).apply(basic_board)
+    assert basic_board.query(state.EntryState)\
+           .filter(state.EntryState.status != 'removed').count() == 9
