@@ -487,17 +487,19 @@ class RemoveEntry(Action):
         session.query(EntryState).filter(EntryState.id_ == self.entry_id).one()
 
     @staticmethod
-    def _mark_entries_removed(entry):
+    def _mark_entries_removed(entry, user):
         entry.status = 'removed'
+        entry.modified_timestamp = datetime.datetime.now()
+        entry.modified_by = user.uid
         for twig in entry.twigs:
-            RemoveEntry._mark_entries_removed(twig)
+            RemoveEntry._mark_entries_removed(twig, user)
 
     def apply(self, session: Session):
         self.validate(session)
-        self.record_current_user(session)
+        user = self.record_current_user(session)
         entry = session.query(EntryState)\
             .filter(EntryState.id_ == self.entry_id).one()
-        RemoveEntry._mark_entries_removed(entry)
+        RemoveEntry._mark_entries_removed(entry, user)
         session.commit()
 
 
