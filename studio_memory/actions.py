@@ -535,8 +535,48 @@ class ModifyEntry(Action):
 
 
 class MoveEntryOnBoard(Action):
-    pass
+    __tablename__ = 'move_entry_on_board'
+    __mapper_args__ = {'polymorphic_identity': 'move_entry_on_board'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        pass
 
 
 class MoveEntryOnOutline(Action):
-    pass
+    __tablename__ = 'move_entry_on_outline'
+    __mapper_args__ = {'polymorphic_identity': 'move_entry_on_outline'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        pass
+
+
+class PromoteEntry(Action):
+    __tablename__ = 'promote_entry'
+    __mapper_args__ = {'polymorphic_identity': 'promote_entry'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        pass
+
+
+class DemoteEntry(Action):
+    __tablename__ = 'promote_entry'
+    __mapper_args__ = {'polymorphic_identity': 'demote_entry'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def validate(self, session: Session):
+        pass
+
+    def apply(self, session: Session):
+        pass
