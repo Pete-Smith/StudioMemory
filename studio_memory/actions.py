@@ -571,7 +571,7 @@ class PromoteEntry(Action):
 
 
 class DemoteEntry(Action):
-    __tablename__ = 'promote_entry'
+    __tablename__ = 'demote_entry'
     __mapper_args__ = {'polymorphic_identity': 'demote_entry'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
 
