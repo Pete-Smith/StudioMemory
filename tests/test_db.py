@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 import uuid
 
 import studio_memory.actions as actions
-import studio_memory.state as state
+import studio_memory.project_state as state
 from studio_memory import DeclarativeBase
 
 BASIC_WIP_LIMITS = (0, 1, 0)

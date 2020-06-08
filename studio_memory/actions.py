@@ -1,4 +1,12 @@
-""" Project history persistence and operational logic. """
+"""
+Project history persistence and operational logic.
+
+Each project database will keep two discrete sets of state:
+    The current outline and kanban state. (The project_state module.)
+    The project history that is essentially the "undo" stack. (This module.)
+
+The actions be used to reconstitute a project state to any point in its timeline.
+"""
 import datetime
 from abc import abstractmethod
 
@@ -10,7 +18,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.orm.exc import NoResultFound
 
 from studio_memory import DeclarativeBase
-from studio_memory.state import (
+from studio_memory.project_state import (
     User, ColumnState, SwimlaneState, EntryState
 )
 
@@ -21,7 +29,12 @@ class KanbanError(Exception):
 
 
 class Action(DeclarativeBase):
-    """ Base class for objects that record the project history.  """
+    """
+    Base class for objects that record the project history.
+    All actions record who created them and when they were created.
+    The column, swimlane and entry foreign keys are optional.
+    The base classes may be parameterized with additional fields.
+    """
     __tablename__ = 'actions'
     id_ = Column(Integer, primary_key=True)
     user_uid = Column(String(36), ForeignKey('users.uid'))
@@ -51,6 +64,19 @@ class Action(DeclarativeBase):
         The client code will be responsible for managing the transaction.
         """
         raise NotImplementedError()
+
+    @abstractmethod
+    def inverse(self, session : Session):
+        """
+        Return an action that would undo this action.
+        Applying the inverse of each action in reverse order is what
+        this program considers an undo.
+        Therefore, the actions given by the inverse methods need to be applied
+        in reverse order from the end of the sequence
+        to walk back the project state.
+        """
+        raise NotImplementedError()
+
 
     def record_current_user(self, session: Session):
         """
@@ -96,6 +122,9 @@ class AddColumn(Action):
         session.commit()
         return new_column
 
+    def inverse(self, session: Session) -> Action:
+        return RemoveColumn(self.column_id)
+
 
 class RemoveColumn(Action):
     __tablename__ = 'remove_column'
@@ -126,6 +155,41 @@ class RemoveColumn(Action):
         column.status = 'removed'
         session.commit()
         return column
+
+    def inverse(self, session : Session):
+        return RestoreColumn(self.column_id)
+
+
+class RestoreColumn(Action):
+    __tablename__ = 'restore_column'
+    __mapper_args__ = {'polymorphic_identity': 'restore_column'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def __init__(self, column_id: int):
+        self.column_id = column_id
+
+    def validate(self, session: Session):
+        # Raises an exception if the column_id isn't found.
+        column = session.query(ColumnState) \
+            .filter(ColumnState.id_ == self.column_id).one()
+        if column.status != 'removed':
+            raise ValueError("Only columns marked removed can be restored.")
+
+    def apply(self, session: Session) -> ColumnState:
+        """
+         Sets the status of the given column to 'removed'.
+         Preserves the column's board_index.
+        """
+        self.record_current_user(session)
+        self.validate(session)
+        column = session.query(ColumnState) \
+            .filter(ColumnState.id_ == self.column_id).one()
+        column.status = 'active'
+        session.commit()
+        return column
+
+    def inverse(self, session : Session):
+        return RemoveColumn(self.column_id)
 
 
 class MoveColumn(Action):
@@ -169,12 +233,27 @@ class MoveColumn(Action):
         session.commit()
         return column
 
+    def inverse(self, session : Session):
+        column = session.query(ColumnState)\
+            .filter(ColumnState.id_ == self.column_id).one()
+        previous_index = session.query(AddColumn)\
+            .filter(AddColumn.column_id == self.column_id).one()
+        last_move_query = session.query(MoveColumn)\
+            .order_by(MoveColumn.id_.desc())\
+            .filter(
+            MoveColumn.column_id == self.column_id, MoveColumn.id_ != self.id_
+        )
+        if last_move_query.any():
+            last_move_action = last_move_query.first()
+            previous_index = last_move_action.new_index
+        return MoveColumn(column, previous_index)
+
 
 class ModifyColumn(Action):
     __tablename__ = 'modify_column'
     __mapper_args__ = {'polymorphic_identity': 'modify_column'}
     id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
-    valid_fields = ('title', 'done_rule', 'column_type', 'wip_limit', 'status',
+    valid_fields = ('title', 'done_rule', 'column_type', 'wip_limit',
                     'line_of_commitment')
     field_name = Column(Enum(*valid_fields))
     field_value = Column(Unicode)
@@ -253,6 +332,9 @@ class ModifyColumn(Action):
             setattr(column, self.field_name, self.field_value)
         session.commit()
         return column
+
+    def inverse(self, session : Session):
+        pass
 
 
 class AddSwimlane(Action):
@@ -440,6 +522,13 @@ class AddEntry(Action):
                 ).one()
             except NoResultFound:
                 raise IndexError(f'Parent entry not found : {self.parent_id}.')
+            parent_entry = session.query(EntryState).filter(
+                EntryState.id_ == self.parent_id
+            ).one()
+            if parent_entry.status == 'removed':
+                raise ValueError(
+                    'Cannot create new entry with removed entry as parent.'
+                )
             sibling_count = session.query(EntryState).filter(
                 and_(EntryState.branch_id == self.parent_id,
                      EntryState.status != 'removed'
@@ -452,6 +541,11 @@ class AddEntry(Action):
                 )
 
     def apply(self, session: Session):
+        """
+        Create a note entry on the given branch of the outline.
+        A null parent_id will create a root entry.
+        New entries don't have any status on the kanban board.
+        """
         self.validate(session)
         user = self.record_current_user(session)
         #  Adjust existing indices.
@@ -459,6 +553,8 @@ class AddEntry(Action):
             and_(EntryState.branch_id == self.parent_id,
                  EntryState.status != 'removed')
         ).all():
+            # Increment the index of the entries that come after the new one
+            # on this given branch.
             if entry.outline_index >= self.insertion_index:
                 entry.outline_index += 1
         new_entry = EntryState(
@@ -483,8 +579,11 @@ class RemoveEntry(Action):
         self.entry_id = entry.id_
 
     def validate(self, session: Session):
-        # Raises an exception if the column_id isn't found.
-        session.query(EntryState).filter(EntryState.id_ == self.entry_id).one()
+        # Raises an exception if the entry_id isn't found.
+        entry_state = session.query(EntryState)\
+            .filter(EntryState.id_ == self.entry_id).one()
+        if entry_state.status == 'removed':
+            raise ValueError('Redundant action : entry is already removed.')
 
     @staticmethod
     def _mark_entries_removed(entry, user):
@@ -501,6 +600,20 @@ class RemoveEntry(Action):
             .filter(EntryState.id_ == self.entry_id).one()
         RemoveEntry._mark_entries_removed(entry, user)
         session.commit()
+
+
+class RestoreEntry(Action):
+    __tablename__ = 'restore_entry'
+    __mapper_args__ = {'polymorphic_identity': 'restore_entry'}
+    id_ = Column(Integer, ForeignKey('actions.id_'), primary_key=True)
+
+    def __init__(self, entry: EntryState):
+        self.entry_id = entry.id_
+
+    def validate(self, session: Session):
+        # Raises an exception if the entry_id isn't found.
+        session.query(EntryState).filter(EntryState.id_ == self.entry_id).one()
+
 
 
 class ModifyEntry(Action):
